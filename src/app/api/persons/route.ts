@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPerson, listPersons } from "@/lib/db";
+import { createPerson, listPersons, listPersonsWithFaces } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,10 +14,22 @@ export async function GET(request: NextRequest) {
     const search = request.nextUrl.searchParams.get("search") || "";
     const pageStr = request.nextUrl.searchParams.get("page") || "1";
     const pageSizeStr = request.nextUrl.searchParams.get("pageSize") || "50";
+    const withFaces = request.nextUrl.searchParams.get("withFaces") === "true";
 
     const page = Math.max(1, parseInt(pageStr, 10) || 1);
     const pageSize = Math.max(1, Math.min(100, parseInt(pageSizeStr, 10) || 50));
     const offset = (page - 1) * pageSize;
+
+    if (withFaces) {
+      const result = listPersonsWithFaces(search || undefined, pageSize, offset);
+      return NextResponse.json({
+        persons: result.persons,
+        page,
+        pageSize,
+        total: result.total,
+        hasMore: result.hasMore,
+      });
+    }
 
     const result = listPersons(search || undefined, pageSize, offset);
 
@@ -49,3 +61,4 @@ export async function POST(request: NextRequest) {
     return errorResponse(error, 500);
   }
 }
+

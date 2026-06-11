@@ -172,31 +172,108 @@ export function getBreadcrumbs(folderId: string | null | undefined): Breadcrumb[
   return crumbs;
 }
 
-export function listFolderContents(parentIdInput: string | null | undefined, searchInput: string | null | undefined) {
+export interface SearchFilters {
+  search?: string;
+  selectedPersonIds?: string[];
+  personCondition?: "any" | "all";
+  selectedTags?: string[];
+}
+
+export function listFolderContents(
+  parentIdInput: string | null | undefined,
+  searchInput: string | null | undefined,
+  filters?: SearchFilters,
+) {
   const db = getDb();
   const parentId = normalizeParentId(parentIdInput);
-  const search = (searchInput || "").trim();
-  const where = folderWhere(parentId);
-  const args = folderArgs(parentId);
-  const searchClause = search ? " AND LOWER(name) LIKE LOWER(?)" : "";
-  const searchArgs = search ? [`%${search}%`] : [];
+  const search = (filters?.search || searchInput || "").trim();
+  const searchTokens = search ? search.toLowerCase().split(/\s+/).filter(Boolean) : [];
+  const hasTextSearch = searchTokens.length > 0;
+  const hasPersonFilter = (filters?.selectedPersonIds?.length ?? 0) > 0;
+  const hasTagFilter = (filters?.selectedTags?.length ?? 0) > 0;
+  const hasAdvancedFilters = hasPersonFilter || hasTagFilter;
 
-  const folderRows = db
-    .prepare(`SELECT id, name, parent_id FROM folders WHERE ${where}${searchClause} ORDER BY LOWER(name) ASC`)
-    .all(...args, ...searchArgs) as Row[];
+  // ── Folders: only text-search by name (no analysis data on folders) ──
+  const folderWhereCond = folderWhere(parentId);
+  const folderBaseArgs = folderArgs(parentId);
+  const folderSearchClause = hasTextSearch ? " AND LOWER(name) LIKE LOWER(?)" : "";
+  const folderSearchArgs = hasTextSearch ? [`%${searchTokens.join("%")}%`] : [];
 
-  const photoWhere = parentId === null ? "folder_id IS NULL" : "folder_id = ?";
-  const photoArgs = parentId === null ? [] : [parentId];
-  const photoSearchClause = search ? " AND LOWER(title) LIKE LOWER(?)" : "";
+  // When advanced filters are active, hide folders (they don't have tags/faces)
+  const folderRows = hasAdvancedFilters
+    ? []
+    : (db
+        .prepare(`SELECT id, name, parent_id FROM folders WHERE ${folderWhereCond}${folderSearchClause} ORDER BY LOWER(name) ASC`)
+        .all(...folderBaseArgs, ...folderSearchArgs) as Row[]);
+
+  // ── Photos: search across title, caption, tags, and face names ──
+  const photoWhere = parentId === null ? "p.folder_id IS NULL" : "p.folder_id = ?";
+  const photoBaseArgs: (string | number | null)[] = parentId === null ? [] : [parentId];
+  const conditions: string[] = [photoWhere];
+  const params: (string | number | null)[] = [...photoBaseArgs];
+
+  // Text search: build a combined searchable string and check each token
+  if (hasTextSearch) {
+    // Use a CTE to build a searchable text blob for each photo:
+    //   title + caption + objects + face names
+    for (const token of searchTokens) {
+      const likeVal = `%${token}%`;
+      conditions.push(`(
+        LOWER(p.title) LIKE LOWER(?) OR
+        LOWER(COALESCE(json_extract(p.analysis_json, '$.caption'), '')) LIKE LOWER(?) OR
+        LOWER(COALESCE(p.analysis_json, '')) LIKE LOWER(?) OR
+        EXISTS (
+          SELECT 1 FROM faces f2
+          JOIN persons pr2 ON pr2.id = f2.person_id
+          WHERE f2.photo_id = p.id AND LOWER(pr2.name) LIKE LOWER(?)
+        )
+      )`);
+      params.push(likeVal, likeVal, likeVal, likeVal);
+    }
+  }
+
+  // Person filter: photos that have faces linked to selected person IDs
+  if (hasPersonFilter) {
+    const personIds = filters!.selectedPersonIds!;
+    const condition = filters?.personCondition || "any";
+
+    if (condition === "all") {
+      // Photo must have faces for ALL selected persons
+      for (const pid of personIds) {
+        conditions.push(`EXISTS (SELECT 1 FROM faces f3 WHERE f3.photo_id = p.id AND f3.person_id = ?)`);
+        params.push(pid);
+      }
+    } else {
+      // Photo must have a face for ANY of the selected persons
+      const placeholders = personIds.map(() => "?").join(",");
+      conditions.push(`EXISTS (SELECT 1 FROM faces f3 WHERE f3.photo_id = p.id AND f3.person_id IN (${placeholders}))`);
+      params.push(...personIds);
+    }
+  }
+
+  // Tag filter: photos whose analysis_json objects array contains selected tags
+  if (hasTagFilter) {
+    const tags = filters!.selectedTags!;
+    for (const tag of tags) {
+      // Check if the tag exists in the objects JSON array
+      conditions.push(`EXISTS (
+        SELECT 1 FROM json_each(COALESCE(json_extract(p.analysis_json, '$.objects'), '[]')) je
+        WHERE LOWER(je.value) = LOWER(?)
+      )`);
+      params.push(tag);
+    }
+  }
+
+  const whereClause = conditions.join(" AND ");
 
   const photoRows = db
     .prepare(`
-      SELECT id, title, folder_id, analysis_status
-      FROM photos
-      WHERE ${photoWhere}${photoSearchClause}
-      ORDER BY LOWER(title) ASC
+      SELECT p.id, p.title, p.folder_id, p.analysis_status
+      FROM photos p
+      WHERE ${whereClause}
+      ORDER BY LOWER(p.title) ASC
     `)
-    .all(...photoArgs, ...searchArgs) as Row[];
+    .all(...params) as Row[];
 
   const contents: FolderItem[] = [
     ...folderRows.map((row) => ({
@@ -545,3 +622,61 @@ export function getFacesByPhoto(photoId: string) {
     created_at: String(row.created_at),
   }));
 }
+
+// ── Tag listing for advanced search ──────────────────────────────────────────
+export function listAllTags(): string[] {
+  const db = getDb();
+  const rows = db
+    .prepare(`
+      SELECT DISTINCT je.value AS tag
+      FROM photos p, json_each(COALESCE(json_extract(p.analysis_json, '$.objects'), '[]')) je
+      WHERE je.value IS NOT NULL AND je.value != ''
+      ORDER BY LOWER(je.value) ASC
+    `)
+    .all() as Row[];
+
+  return rows.map((row) => String(row.tag));
+}
+
+// ── Persons with faces for advanced search dropdown ──────────────────────────
+export function listPersonsWithFaces(search?: string, limit = 50, offset = 0) {
+  const db = getDb();
+  const searchClause = search ? "AND LOWER(pr.name) LIKE LOWER(?)" : "";
+  const searchArgs = search ? [`%${search}%`] : [];
+
+  const rows = db
+    .prepare(`
+      SELECT DISTINCT pr.id, pr.name, pr.created_at, pr.updated_at
+      FROM persons pr
+      INNER JOIN faces f ON f.person_id = pr.id
+      WHERE 1=1 ${searchClause}
+      ORDER BY LOWER(pr.name) ASC
+      LIMIT ? OFFSET ?
+    `)
+    .all(...searchArgs, limit, offset) as Row[];
+
+  const totalRow = db
+    .prepare(`
+      SELECT COUNT(DISTINCT pr.id) as count
+      FROM persons pr
+      INNER JOIN faces f ON f.person_id = pr.id
+      WHERE 1=1 ${searchClause}
+    `)
+    .get(...searchArgs) as Row;
+
+  const total = Number(totalRow.count);
+
+  return {
+    persons: rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    })),
+    total,
+    limit,
+    offset,
+    hasMore: offset + limit < total,
+  };
+}
+

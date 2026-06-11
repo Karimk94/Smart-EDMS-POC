@@ -10,6 +10,7 @@ import { PhotoModal } from "./PhotoModal";
 import { Spinner } from "./Spinner";
 import { UploadModal } from "./UploadModal";
 import { useToast } from "./ToastProvider";
+import { AdvancedSearch } from "./AdvancedSearch";
 
 interface FoldersResponse {
   contents: FolderItem[];
@@ -165,7 +166,14 @@ export function PhotoPocApp() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [contents, setContents] = useState<FolderItem[]>([]);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
+  
+  // ── Search State ──
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedPersons, setSelectedPersons] = useState<{ id: string; name: string }[]>([]);
+  const [personCondition, setPersonCondition] = useState<"any" | "all">("any");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -200,6 +208,13 @@ export function PhotoPocApp() {
         const params = new URLSearchParams();
         if (currentFolderId) params.set("parent_id", currentFolderId);
         if (searchTerm.trim()) params.set("search", searchTerm.trim());
+        if (selectedPersons.length > 0) {
+          params.set("personIds", selectedPersons.map((p) => p.id).join(","));
+          params.set("personCondition", personCondition);
+        }
+        if (selectedTags.length > 0) {
+          params.set("tags", selectedTags.join(","));
+        }
 
         const data = await requestJson<FoldersResponse>(`/api/folders?${params.toString()}`, { cache: "no-store" });
         setContents(data.contents);
@@ -211,7 +226,7 @@ export function PhotoPocApp() {
         setIsRefreshing(false);
       }
     },
-    [currentFolderId, searchTerm, showToast],
+    [currentFolderId, searchTerm, selectedPersons, personCondition, selectedTags, showToast],
   );
 
   useEffect(() => {
@@ -310,15 +325,50 @@ export function PhotoPocApp() {
           </div>
         </div>
 
-        <div className="ml-auto flex items-center gap-2 flex-1 max-w-3xl">
-          <div className="relative flex-1 hidden sm:block">
-            <Image src="/search-icon.svg" alt="" width={18} height={18} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-50" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder={t("searchThisFolder")}
-              className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 dark:bg-[#121212] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <div className="ml-auto flex items-center gap-2 flex-1 max-w-4xl">
+          <div className="relative flex-1 hidden sm:flex items-center gap-2">
+            <div className="relative flex-1">
+              <Image src="/search-icon.svg" alt="" width={18} height={18} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-50" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={t("searchEverything")}
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 dark:bg-[#121212] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+              />
+            </div>
+            
+            <div className="relative">
+              <button
+                onClick={() => setIsAdvancedSearchOpen(!isAdvancedSearchOpen)}
+                className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition ${
+                  isAdvancedSearchOpen || selectedPersons.length > 0 || selectedTags.length > 0
+                    ? "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300"
+                    : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#121212] dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                <span className="hidden lg:inline">{t("filters")}</span>
+                {(selectedPersons.length > 0 || selectedTags.length > 0) && (
+                  <span className="ml-1 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {selectedPersons.length + selectedTags.length}
+                  </span>
+                )}
+              </button>
+
+              <AdvancedSearch
+                selectedPersons={selectedPersons}
+                setSelectedPersons={setSelectedPersons}
+                personCondition={personCondition}
+                setPersonCondition={setPersonCondition}
+                selectedTags={selectedTags}
+                setSelectedTags={setSelectedTags}
+                isOpen={isAdvancedSearchOpen}
+                onClose={() => setIsAdvancedSearchOpen(false)}
+                t={t}
+              />
+            </div>
           </div>
           <div className="hidden md:flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#121212] p-1">
             <button

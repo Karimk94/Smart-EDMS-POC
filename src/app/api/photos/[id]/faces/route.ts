@@ -79,7 +79,7 @@ export async function POST(
       try {
         const analysis = JSON.parse(photo.analysis_json);
         if (analysis && Array.isArray(analysis.faces)) {
-          const targetFace = analysis.faces.find((f: any) => f.index === face.index);
+          const targetFace = analysis.faces.find((f: { index: number; name?: string; personId?: string }) => f.index === face.index);
           if (targetFace) {
             targetFace.name = person.name;
             targetFace.personId = person.id;

@@ -62,7 +62,7 @@ export function FaceNameModal({ face, photoId, onClose, onSave, isLoading = fals
     setSearchText("");
   };
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     const finalName = name.trim();
     if (!finalName) {
       alert("Please enter a name for the face.");
@@ -97,7 +97,8 @@ export function FaceNameModal({ face, photoId, onClose, onSave, isLoading = fals
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to save face");
     }
-  };
+  }, [name, face, photoId, onSave, onClose]);
+
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -108,7 +109,7 @@ export function FaceNameModal({ face, photoId, onClose, onSave, isLoading = fals
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, isLoading, loadingPersons]);
+  }, [onClose, isLoading, loadingPersons, handleSave]);
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" onClick={onClose}>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createFolder, listFolderContents } from "@/lib/db";
+import type { SearchFilters } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,18 @@ export async function GET(request: NextRequest) {
   try {
     const parentId = request.nextUrl.searchParams.get("parent_id");
     const search = request.nextUrl.searchParams.get("search");
-    return NextResponse.json(listFolderContents(parentId, search));
+    const personIdsParam = request.nextUrl.searchParams.get("personIds");
+    const personCondition = request.nextUrl.searchParams.get("personCondition") as "any" | "all" | null;
+    const tagsParam = request.nextUrl.searchParams.get("tags");
+
+    const filters: SearchFilters = {
+      search: search || undefined,
+      selectedPersonIds: personIdsParam ? personIdsParam.split(",").filter(Boolean) : undefined,
+      personCondition: personCondition || "any",
+      selectedTags: tagsParam ? tagsParam.split(",").filter(Boolean) : undefined,
+    };
+
+    return NextResponse.json(listFolderContents(parentId, search, filters));
   } catch (error) {
     return errorResponse(error);
   }
@@ -28,3 +40,4 @@ export async function POST(request: NextRequest) {
     return errorResponse(error, 400);
   }
 }
+

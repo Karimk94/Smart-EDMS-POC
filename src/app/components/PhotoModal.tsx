@@ -301,7 +301,6 @@ export function PhotoModal({ photoId, onClose, onChanged }: PhotoModalProps) {
   const [isAnalysisMenuOpen, setIsAnalysisMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [faceToName, setFaceToName] = useState<FaceDetection | null>(null);
-  const [isSavingFace, setIsSavingFace] = useState(false);
   const [isSavingCaption, setIsSavingCaption] = useState(false);
   const [isSavingOcr, setIsSavingOcr] = useState(false);
   const [isSavingTags, setIsSavingTags] = useState(false);
@@ -428,10 +427,6 @@ export function PhotoModal({ photoId, onClose, onChanged }: PhotoModalProps) {
   };
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const processedFaceImage = useMemo(() => {
-    const faceRaw = asRecord(photo?.analysis?.rawResponses.face);
-    return stringValue(faceRaw.processed_image);
-  }, [photo]);
 
   const faces = Array.isArray(photo?.analysis?.faces) ? (photo.analysis.faces as FaceDetection[]) : [];
   const analysisDisabled = !photo || photo.analysis_status === "running" || photo.analysis_status === "queued";
@@ -642,7 +637,6 @@ export function PhotoModal({ photoId, onClose, onChanged }: PhotoModalProps) {
           photoId={photoId}
           onClose={() => setFaceToName(null)}
           onSave={handleFaceSave}
-          isLoading={isSavingFace}
         />
       )}
     </div>
